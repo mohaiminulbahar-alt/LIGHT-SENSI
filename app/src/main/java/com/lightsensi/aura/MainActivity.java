@@ -1,6 +1,5 @@
 package com.lightsensi.aura;
 
-import android.animation.ValueAnimator;
 import android.app.Activity;
 import android.content.pm.PackageManager;
 import android.content.res.ColorStateList;
@@ -9,13 +8,10 @@ import android.graphics.Outline;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.RippleDrawable;
-import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
-import android.text.TextUtils;
 import android.view.Gravity;
-import android.view.HapticFeedbackConstants;
 import android.view.View;
 import android.view.ViewOutlineProvider;
 import android.widget.Button;
@@ -30,33 +26,32 @@ import android.widget.Toast;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.lang.reflect.Method;
-import java.util.ArrayList;
 
 import rikka.shizuku.Shizuku;
 
 public class MainActivity extends Activity {
 
     final int RED = 0xFFFF1E3C;
-    final int GREEN = 0xFF20E080;
-    final int ORANGE = 0xFFFFA229;
+    final int GREEN = 0xFF22D87B;
+    final int ORANGE = 0xFFFFA12A;
 
     float d;
-    TextView status, log, title;
-    View dot;
+    LinearLayout root;
+    TextView status;
+    TextView logs;
     ScrollView logBox;
-    ProgressBar progress;
-    LinearLayout content;
-    Handler h = new Handler(Looper.getMainLooper());
-    ArrayList<View> animations = new ArrayList<>();
-    volatile boolean busy = false;
+    ProgressBar bar;
+    View dot;
+    Handler ui = new Handler(Looper.getMainLooper());
+    boolean busy = false;
 
     int dp(float n) {
         return (int) (n * d);
     }
 
     @Override
-    protected void onCreate(Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState);
+    protected void onCreate(Bundle b) {
+        super.onCreate(b);
 
         d = getResources().getDisplayMetrics().density;
         getWindow().setStatusBarColor(0xFF100002);
@@ -70,76 +65,67 @@ public class MainActivity extends Activity {
         );
 
         if (aura != 0) {
-            ImageView background = new ImageView(this);
-            background.setImageResource(aura);
-            background.setScaleType(ImageView.ScaleType.CENTER_CROP);
-            background.setAlpha(0.30f);
-            base.addView(background, new FrameLayout.LayoutParams(-1, -1));
+            ImageView bg = new ImageView(this);
+            bg.setImageResource(aura);
+            bg.setScaleType(ImageView.ScaleType.CENTER_CROP);
+            bg.setAlpha(0.30f);
+            base.addView(bg, new FrameLayout.LayoutParams(-1, -1));
         }
 
-        View darkLayer = new View(this);
-        darkLayer.setBackground(new GradientDrawable(
+        View shade = new View(this);
+        shade.setBackground(new GradientDrawable(
                 GradientDrawable.Orientation.TOP_BOTTOM,
-                new int[]{
-                        0x66130004,
-                        0xA8000000,
-                        0xF2000000
-                }
+                new int[]{0x661A0005, 0xB8000000, 0xF5000000}
         ));
-        base.addView(darkLayer, new FrameLayout.LayoutParams(-1, -1));
+        base.addView(shade, new FrameLayout.LayoutParams(-1, -1));
 
         ScrollView page = new ScrollView(this);
         page.setVerticalScrollBarEnabled(false);
 
-        content = new LinearLayout(this);
-        content.setOrientation(LinearLayout.VERTICAL);
-        content.setPadding(dp(16), dp(26), dp(16), dp(32));
+        root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setPadding(dp(16), dp(25), dp(16), dp(32));
 
-        page.addView(content);
+        page.addView(root);
         base.addView(page, new FrameLayout.LayoutParams(-1, -1));
 
-        buildHeader(aura);
-        buildShizukuCard();
-        buildMaxButton();
-        addSections(Cmd.S, 1);
-        addSections(Cmd.X, 1 + Cmd.S.length / 3);
-        buildTerminal();
+        header(aura);
+        shizukuCard();
+
+        Button all = button("ACTIVATE ALL  •  MAX AURA", 1, 62);
+        all.setTextSize(15);
+        all.setOnClickListener(v -> {
+            StringBuilder script = new StringBuilder();
+            for (int i = 2; i < Cmd.S.length; i += 3) {
+                script.append(Cmd.S[i]).append("\n");
+            }
+            run("MAX AURA", script.toString(), all);
+        });
+        root.addView(all);
+
+        sections(Cmd.S, 1);
+        sections(Cmd.X, 1 + Cmd.S.length / 3);
+        terminal();
 
         setContentView(base);
 
-        page.post(() -> {
-            for (int i = 0; i < animations.size(); i++) {
-                View v = animations.get(i);
-                v.setTranslationY(dp(30));
-                v.animate()
-                        .alpha(1f)
-                        .translationY(0)
-                        .setDuration(360)
-                        .setStartDelay(i * 40L)
-                        .start();
-            }
-        });
-
         Shizuku.addRequestPermissionResultListener(
-                (requestCode, grantResult) -> h.post(this::updateStatus)
+                (code, result) -> ui.post(this::state)
         );
 
-        Shizuku.addBinderReceivedListenerSticky(
-                () -> h.post(this::updateStatus)
-        );
-
-        Shizuku.addBinderDeadListener(
-                () -> h.post(this::updateStatus)
-        );
-
-        updateStatus();
+        state();
     }
 
-    void buildHeader(int aura) {
-        LinearLayout header = row();
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (status != null) state();
+    }
+
+    void header(int aura) {
+        LinearLayout head = row();
 
         ImageView logo = new ImageView(this);
-
         if (aura != 0) {
             logo.setImageResource(aura);
             logo.setScaleType(ImageView.ScaleType.CENTER_CROP);
@@ -147,380 +133,219 @@ public class MainActivity extends Activity {
             logo.setImageResource(android.R.drawable.sym_def_app_icon);
         }
 
-        GradientDrawable logoRing = new GradientDrawable();
-        logoRing.setShape(GradientDrawable.OVAL);
-        logoRing.setColors(new int[]{0x88FF1E3C, 0x22000000});
-        logoRing.setStroke(dp(2), 0xBBFFFFFF);
-
-        logo.setBackground(logoRing);
+        logo.setBackground(circle(0x66000000, 0xAAFF4058));
         logo.setPadding(dp(3), dp(3), dp(3), dp(3));
 
         logo.setOutlineProvider(new ViewOutlineProvider() {
             @Override
-            public void getOutline(View view, Outline outline) {
-                outline.setOval(0, 0, view.getWidth(), view.getHeight());
+            public void getOutline(View v, Outline o) {
+                o.setOval(0, 0, v.getWidth(), v.getHeight());
             }
         });
 
         logo.setClipToOutline(true);
 
-        LinearLayout.LayoutParams logoSize =
+        LinearLayout.LayoutParams lp =
                 new LinearLayout.LayoutParams(dp(66), dp(66));
 
-        logoSize.rightMargin = dp(13);
-        logo.setLayoutParams(logoSize);
-        header.addView(logo);
+        lp.rightMargin = dp(13);
+        logo.setLayoutParams(lp);
+        head.addView(logo);
 
-        LinearLayout textBox = new LinearLayout(this);
-        textBox.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout text = new LinearLayout(this);
+        text.setOrientation(LinearLayout.VERTICAL);
 
-        title = tv("LIGHT SENSI", 27, 0xFFFFF5F5, true);
-        title.setLetterSpacing(0.05f);
+        TextView name = tv("LIGHT SENSI", 27, 0xFFFFF3F4, true);
+        name.setLetterSpacing(0.05f);
+        name.setShadowLayer(dp(14), 0, 0, RED);
 
-        TextView sub = tv("KIRA  AURA  ENGINE", 10, 0xFFFF7B88, true);
-        sub.setLetterSpacing(0.24f);
+        TextView sub = tv("KIRA  AURA  ENGINE", 10, 0xFFFF8090, true);
+        sub.setLetterSpacing(0.20f);
 
-        textBox.addView(title);
-        textBox.addView(sub);
-        header.addView(textBox);
+        text.addView(name);
+        text.addView(sub);
+        head.addView(text);
 
-        addAnimated(header);
-
-        ValueAnimator glow = ValueAnimator.ofFloat(6f, 28f);
-        glow.setDuration(1300);
-        glow.setRepeatCount(ValueAnimator.INFINITE);
-        glow.setRepeatMode(ValueAnimator.REVERSE);
-
-        glow.addUpdateListener(value ->
-                title.setShadowLayer(
-                        (Float) value.getAnimatedValue(),
-                        0,
-                        0,
-                        RED
-                )
-        );
-
-        glow.start();
+        root.addView(head);
 
         LinearLayout chips = row();
         chips.setPadding(0, dp(16), 0, 0);
 
-        chips.addView(chip("ANDROID", Build.VERSION.RELEASE));
-        chips.addView(chip("CORES",
-                String.valueOf(Runtime.getRuntime().availableProcessors())));
-        chips.addView(chip("DEVICE", Build.MODEL));
+        chips.addView(chip("ANDROID", android.os.Build.VERSION.RELEASE));
+        chips.addView(chip(
+                "CORES",
+                String.valueOf(Runtime.getRuntime().availableProcessors())
+        ));
+        chips.addView(chip("DEVICE", android.os.Build.MODEL));
 
-        addAnimated(chips);
+        root.addView(chips);
     }
 
-    void buildShizukuCard() {
+    void shizukuCard() {
         LinearLayout card = glassCard();
-
-        LinearLayout statusRow = row();
+        LinearLayout line = row();
 
         dot = new View(this);
+        dot.setBackground(circle(RED, RED));
 
-        GradientDrawable dotBg = new GradientDrawable();
-        dotBg.setShape(GradientDrawable.OVAL);
-        dotBg.setColor(RED);
-
-        dot.setBackground(dotBg);
-
-        LinearLayout.LayoutParams dotSize =
+        LinearLayout.LayoutParams dpv =
                 new LinearLayout.LayoutParams(dp(10), dp(10));
 
-        dotSize.rightMargin = dp(10);
-        dot.setLayoutParams(dotSize);
+        dpv.rightMargin = dp(10);
+        dot.setLayoutParams(dpv);
 
-        statusRow.addView(dot);
+        line.addView(dot);
 
-        status = tv("SHIZUKU : CHECKING", 12, 0xFFFFB2BA, true);
+        status = tv("SHIZUKU : CHECKING", 12, 0xFFFFB7BE, true);
         status.setLetterSpacing(0.08f);
 
-        statusRow.addView(status);
-        card.addView(statusRow);
+        line.addView(status);
+        card.addView(line);
 
-        Button connect = button("CONNECT SHIZUKU", false, 48);
-
-        connect.setOnClickListener(v -> {
-            vibe(v);
-            connectShizuku();
-        });
+        Button connect = button("CONNECT SHIZUKU", 0, 48);
+        connect.setOnClickListener(v -> connect());
 
         card.addView(connect);
-        addAnimated(card);
+        root.addView(card);
     }
 
-    void buildMaxButton() {
-        Button all = button("ACTIVATE ALL  •  MAX AURA", true, 64);
-        all.setTextSize(15);
-
-        all.setOnClickListener(v -> {
-            vibe(v);
-
-            StringBuilder script = new StringBuilder();
-
-            for (int i = 2; i < Cmd.S.length; i += 3) {
-                script.append(Cmd.S[i]).append("\n");
-            }
-
-            runCommand("MAX AURA", script.toString(), (Button) v);
-        });
-
-        addAnimated(all);
-    }
-
-    void addSections(String[] list, int startNumber) {
+    void sections(String[] list, int start) {
         for (int i = 0; i < list.length; i += 3) {
-            final String sectionTitle = list[i];
-            final String sectionScript = list[i + 2];
+            String title = list[i];
+            String desc = list[i + 1];
+            String script = list[i + 2];
 
             LinearLayout card = glassCard();
             LinearLayout top = row();
 
-            top.addView(badge(startNumber + i / 3));
+            top.addView(badge(start + i / 3));
 
-            LinearLayout tx = new LinearLayout(this);
-            tx.setOrientation(LinearLayout.VERTICAL);
+            LinearLayout info = new LinearLayout(this);
+            info.setOrientation(LinearLayout.VERTICAL);
 
-            TextView title = tv(sectionTitle, 15, 0xFFFFF4F4, true);
-            TextView desc = tv(list[i + 1], 10, 0xFFB49DA1, false);
+            info.addView(tv(title, 15, 0xFFFFF3F4, true));
+            info.addView(tv(desc, 10, 0xFFB89FA5, false));
 
-            tx.addView(title);
-            tx.addView(desc);
-
-            top.addView(tx);
+            top.addView(info);
             card.addView(top);
 
-            boolean isRisky = sectionTitle.contains("EXTREME");
-            boolean isInfo = sectionTitle.contains("INFO");
-            boolean isReset = sectionTitle.contains("RESET");
+            int style = 1;
+            String label = "APPLY";
 
-            String buttonText = isInfo ? "CHECK" :
-                    (isReset ? "RESET" : "APPLY");
-
-            Button apply = button(
-                    buttonText,
-                    !isInfo && !isReset,
-                    46
-            );
-
-            if (isRisky) {
-                apply.setText("EXTREME");
+            if (title.contains("EXTREME")) {
+                label = "EXTREME";
+                style = 2;
             }
 
-            apply.setOnClickListener(v -> {
-                vibe(v);
-                runCommand(sectionTitle, sectionScript, (Button) v);
-            });
+            if (title.contains("RESET")) {
+                label = "RESET";
+                style = 0;
+            }
+
+            if (title.contains("INFO")) {
+                label = "CHECK";
+                style = 0;
+            }
+
+            Button apply = button(label, style, 46);
+
+            final String t = title;
+            final String s = script;
+
+            apply.setOnClickListener(v -> run(t, s, apply));
 
             card.addView(apply);
-            addAnimated(card);
+            root.addView(card);
         }
     }
 
-    void buildTerminal() {
-        TextView label = tv("TERMINAL OUTPUT", 11, 0xFFFF7B88, true);
-        label.setLetterSpacing(0.25f);
+    void terminal() {
+        TextView label = tv("TERMINAL OUTPUT", 11, 0xFFFF8090, true);
+        label.setLetterSpacing(0.20f);
         label.setPadding(dp(6), dp(22), 0, dp(8));
+        root.addView(label);
 
-        addAnimated(label);
-
-        progress = new ProgressBar(
-                this,
-                null,
-                android.R.attr.progressBarStyleHorizontal
+        bar = new ProgressBar(
+                this, null, android.R.attr.progressBarStyleHorizontal
         );
 
-        progress.setIndeterminate(true);
-        progress.setIndeterminateTintList(
-                ColorStateList.valueOf(RED)
-        );
-
-        progress.setVisibility(View.INVISIBLE);
-        progress.setLayoutParams(
-                new LinearLayout.LayoutParams(-1, dp(3))
-        );
-
-        content.addView(progress);
+        bar.setIndeterminate(true);
+        bar.setIndeterminateTintList(ColorStateList.valueOf(RED));
+        bar.setVisibility(View.INVISIBLE);
+        bar.setLayoutParams(new LinearLayout.LayoutParams(-1, dp(3)));
+        root.addView(bar);
 
         logBox = new ScrollView(this);
         logBox.setVerticalScrollBarEnabled(false);
-        logBox.setBackground(glass(20,
-                0x33000000,
-                0x1A000000,
-                0x44FFFFFF
-        ));
-
+        logBox.setBackground(glass(20, 0x3A000000, 0x18000000, 0x44FFFFFF));
         logBox.setPadding(dp(13), dp(13), dp(13), dp(13));
+        logBox.setLayoutParams(new LinearLayout.LayoutParams(-1, dp(245)));
 
-        logBox.setLayoutParams(
-                new LinearLayout.LayoutParams(-1, dp(250))
-        );
+        logs = tv("[ LIGHT SENSI ] Kira Aura ready.", 11, 0xFFFFB0B8, false);
+        logs.setTypeface(Typeface.MONOSPACE);
 
-        log = tv("[ LIGHT SENSI ] Kira Aura ready.", 11,
-                0xFFFFB0B8, false);
+        logBox.addView(logs);
+        root.addView(logBox);
 
-        log.setTypeface(Typeface.MONOSPACE);
-        logBox.addView(log);
-
-        content.addView(logBox);
-
-        LinearLayout buttons = row();
-
-        Button clear = button("CLEAR LOG", false, 44);
+        Button clear = button("CLEAR LOG", 0, 44);
         clear.setTextSize(11);
+        clear.setOnClickListener(v -> logs.setText("[ terminal cleared ]"));
+        root.addView(clear);
 
-        clear.setOnClickListener(v -> {
-            vibe(v);
-            log.setText("[ terminal cleared ]");
-        });
-
-        LinearLayout.LayoutParams half =
-                new LinearLayout.LayoutParams(0, dp(44), 1f);
-
-        half.topMargin = dp(10);
-        half.leftMargin = dp(4);
-        half.rightMargin = dp(4);
-
-        clear.setLayoutParams(half);
-        buttons.addView(clear);
-
-        Button info = button("DEVICE INFO", false, 44);
-        info.setTextSize(11);
-
-        info.setOnClickListener(v -> {
-            vibe(v);
-            runCommand("DEVICE INFO", findInfoScript(), info);
-        });
-
-        info.setLayoutParams(
-                new LinearLayout.LayoutParams(half)
-        );
-
-        buttons.addView(info);
-        content.addView(buttons);
-
-        TextView footer = tv(
-                "LIGHT SENSI  •  KIRA GLASS EDITION  •  SHIZUKU",
+        TextView foot = tv(
+                "LIGHT SENSI • KIRA GLASS EDITION • SHIZUKU",
                 9,
-                0xFF76545A,
+                0xFF795258,
                 true
         );
 
-        footer.setGravity(Gravity.CENTER);
-        footer.setLetterSpacing(0.14f);
-        footer.setPadding(0, dp(20), 0, 0);
+        foot.setGravity(Gravity.CENTER);
+        foot.setLetterSpacing(0.12f);
+        foot.setPadding(0, dp(20), 0, 0);
 
-        content.addView(footer);
-    }
-
-    String findInfoScript() {
-        for (int i = 0; i < Cmd.X.length; i += 3) {
-            if (Cmd.X[i].contains("INFO")) {
-                return Cmd.X[i + 2];
-            }
-        }
-
-        return "getprop ro.product.model";
-    }
-
-    void addAnimated(View view) {
-        view.setAlpha(0f);
-        animations.add(view);
-        content.addView(view);
+        root.addView(foot);
     }
 
     LinearLayout row() {
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setLayoutParams(
-                new LinearLayout.LayoutParams(-1, -2)
-        );
-        return row;
+        LinearLayout v = new LinearLayout(this);
+        v.setOrientation(LinearLayout.HORIZONTAL);
+        v.setGravity(Gravity.CENTER_VERTICAL);
+        v.setLayoutParams(new LinearLayout.LayoutParams(-1, -2));
+        return v;
     }
 
     LinearLayout glassCard() {
-        LinearLayout card = new LinearLayout(this);
-        card.setOrientation(LinearLayout.VERTICAL);
-
-        card.setPadding(dp(16), dp(15), dp(16), dp(15));
-
-        card.setBackground(glass(
-                25,
-                0x33FFFFFF,
-                0x12000000,
-                0x45FFFFFF
-        ));
-
-        card.setElevation(dp(4));
+        LinearLayout v = new LinearLayout(this);
+        v.setOrientation(LinearLayout.VERTICAL);
+        v.setPadding(dp(16), dp(15), dp(16), dp(15));
+        v.setBackground(glass(25, 0x38FFFFFF, 0x16000000, 0x4DFFFFFF));
+        v.setElevation(dp(4));
 
         LinearLayout.LayoutParams p =
                 new LinearLayout.LayoutParams(-1, -2);
 
         p.topMargin = dp(13);
-        card.setLayoutParams(p);
+        v.setLayoutParams(p);
 
-        return card;
+        return v;
     }
 
-    GradientDrawable glass(int radius, int color1,
-                           int color2, int border) {
+    LinearLayout chip(String a, String b) {
+        LinearLayout v = new LinearLayout(this);
+        v.setOrientation(LinearLayout.VERTICAL);
+        v.setGravity(Gravity.CENTER);
+        v.setPadding(dp(4), dp(9), dp(4), dp(9));
+        v.setBackground(glass(18, 0x2CFFFFFF, 0x14000000, 0x3BFFFFFF));
 
-        GradientDrawable bg = new GradientDrawable(
-                GradientDrawable.Orientation.TL_BR,
-                new int[]{color1, color2}
-        );
+        TextView x = tv(a, 8, 0xFFC6AEB2, true);
+        x.setGravity(Gravity.CENTER);
 
-        bg.setCornerRadius(dp(radius));
-        bg.setStroke(Math.max(1, dp(1)), border);
+        TextView y = tv(b, 11, 0xFFFF9DA8, true);
+        y.setGravity(Gravity.CENTER);
+        y.setSingleLine(true);
 
-        return bg;
-    }
-
-    TextView tv(String text, int size,
-                int color, boolean bold) {
-
-        TextView t = new TextView(this);
-
-        t.setText(text);
-        t.setTextSize(size);
-        t.setTextColor(color);
-
-        if (bold) {
-            t.setTypeface(Typeface.DEFAULT_BOLD);
-        }
-
-        return t;
-    }
-
-    LinearLayout chip(String key, String value) {
-        LinearLayout card = new LinearLayout(this);
-
-        card.setOrientation(LinearLayout.VERTICAL);
-        card.setGravity(Gravity.CENTER);
-
-        card.setPadding(dp(4), dp(9), dp(4), dp(9));
-
-        card.setBackground(glass(
-                18,
-                0x2AFFFFFF,
-                0x11000000,
-                0x36FFFFFF
-        ));
-
-        TextView a = tv(key, 8, 0xFFC0A6AA, true);
-        a.setGravity(Gravity.CENTER);
-        a.setLetterSpacing(0.13f);
-
-        TextView b = tv(value, 11, 0xFFFF9AA5, true);
-        b.setGravity(Gravity.CENTER);
-        b.setSingleLine(true);
-        b.setEllipsize(TextUtils.TruncateAt.END);
-
-        card.addView(a);
-        card.addView(b);
+        v.addView(x);
+        v.addView(y);
 
         LinearLayout.LayoutParams p =
                 new LinearLayout.LayoutParams(0, -2, 1f);
@@ -528,66 +353,63 @@ public class MainActivity extends Activity {
         p.leftMargin = dp(4);
         p.rightMargin = dp(4);
 
-        card.setLayoutParams(p);
+        v.setLayoutParams(p);
 
-        return card;
+        return v;
     }
 
-    TextView badge(int number) {
-        TextView n = tv(String.valueOf(number), 12,
-                Color.WHITE, true);
-
-        n.setGravity(Gravity.CENTER);
-
-        GradientDrawable bg = new GradientDrawable(
-                GradientDrawable.Orientation.TL_BR,
-                new int[]{RED, 0xFF870015}
-        );
-
-        bg.setShape(GradientDrawable.OVAL);
-        bg.setStroke(dp(1), 0x55FFFFFF);
-
-        n.setBackground(bg);
+    TextView badge(int n) {
+        TextView v = tv(String.valueOf(n), 12, Color.WHITE, true);
+        v.setGravity(Gravity.CENTER);
+        v.setBackground(circle(RED, 0x66FFFFFF));
 
         LinearLayout.LayoutParams p =
                 new LinearLayout.LayoutParams(dp(30), dp(30));
 
         p.rightMargin = dp(12);
-        n.setLayoutParams(p);
+        v.setLayoutParams(p);
 
-        return n;
+        return v;
     }
 
-    Button button(String text, boolean red, int height) {
-        Button button = new Button(this);
+    TextView tv(String s, int size, int color, boolean bold) {
+        TextView v = new TextView(this);
+        v.setText(s);
+        v.setTextSize(size);
+        v.setTextColor(color);
 
-        button.setText(text);
-        button.setTextSize(13);
-        button.setTextColor(Color.WHITE);
-        button.setTypeface(Typeface.DEFAULT_BOLD);
-        button.setLetterSpacing(0.07f);
-        button.setAllCaps(true);
-        button.setStateListAnimator(null);
+        if (bold) v.setTypeface(Typeface.DEFAULT_BOLD);
 
-        GradientDrawable face;
+        return v;
+    }
 
-        if (red) {
-            face = glass(18,
-                    0xD9FF1E3C,
-                    0xAA7A0015,
-                    0x66FFFFFF
-            );
-        } else {
-            face = glass(18,
-                    0x38FFFFFF,
-                    0x17000000,
-                    0x45FFFFFF
-            );
+    Button button(String s, int style, int height) {
+        Button v = new Button(this);
+
+        v.setText(s);
+        v.setTextSize(13);
+        v.setTextColor(Color.WHITE);
+        v.setTypeface(Typeface.DEFAULT_BOLD);
+        v.setLetterSpacing(0.07f);
+        v.setAllCaps(true);
+        v.setStateListAnimator(null);
+
+        int a = 0x3CFFFFFF;
+        int b = 0x16000000;
+
+        if (style == 1) {
+            a = 0xD9FF1E3C;
+            b = 0xAA780011;
         }
 
-        button.setBackground(new RippleDrawable(
+        if (style == 2) {
+            a = 0xDDFF801A;
+            b = 0xAA703000;
+        }
+
+        v.setBackground(new RippleDrawable(
                 ColorStateList.valueOf(0x55FFFFFF),
-                face,
+                glass(18, a, b, 0x66FFFFFF),
                 null
         ));
 
@@ -595,59 +417,71 @@ public class MainActivity extends Activity {
                 new LinearLayout.LayoutParams(-1, dp(height));
 
         p.topMargin = dp(11);
-        button.setLayoutParams(p);
+        v.setLayoutParams(p);
 
-        return button;
+        return v;
     }
 
-    void vibe(View view) {
-        view.performHapticFeedback(
-                HapticFeedbackConstants.VIRTUAL_KEY
+    GradientDrawable glass(int radius, int a, int b, int border) {
+        GradientDrawable v = new GradientDrawable(
+                GradientDrawable.Orientation.TL_BR,
+                new int[]{a, b}
         );
+
+        v.setCornerRadius(dp(radius));
+        v.setStroke(Math.max(1, dp(1)), border);
+
+        return v;
     }
 
-    boolean isReady() {
+    GradientDrawable circle(int color, int border) {
+        GradientDrawable v = new GradientDrawable();
+        v.setShape(GradientDrawable.OVAL);
+        v.setColor(color);
+        v.setStroke(dp(1), border);
+        return v;
+    }
+
+    boolean ready() {
         try {
             return Shizuku.pingBinder()
-                    && !Shizuku.isPreV11()
                     && Shizuku.checkSelfPermission()
                     == PackageManager.PERMISSION_GRANTED;
 
-        } catch (Throwable error) {
+        } catch (Throwable e) {
             return false;
         }
     }
 
-    void updateStatus() {
+    void state() {
         try {
-            GradientDrawable dotColor =
-                    (GradientDrawable) dot.getBackground();
+            GradientDrawable bg = (GradientDrawable) dot.getBackground();
 
             if (!Shizuku.pingBinder()) {
                 status.setText("SHIZUKU : NOT RUNNING");
-                status.setTextColor(0xFFFF9AA5);
-                dotColor.setColor(RED);
+                status.setTextColor(0xFFFF9CA7);
+                bg.setColor(RED);
 
-            } else if (isReady()) {
+            } else if (ready()) {
                 status.setText("SHIZUKU : CONNECTED");
                 status.setTextColor(GREEN);
-                dotColor.setColor(GREEN);
+                bg.setColor(GREEN);
 
             } else {
                 status.setText("SHIZUKU : PERMISSION NEEDED");
                 status.setTextColor(ORANGE);
-                dotColor.setColor(ORANGE);
+                bg.setColor(ORANGE);
             }
 
-        } catch (Throwable error) {
+        } catch (Throwable e) {
             status.setText("SHIZUKU : ERROR");
         }
     }
 
-    void connectShizuku() {
+    void connect() {
         try {
             if (!Shizuku.pingBinder()) {
-                addLog("! Shizuku app open kore START koro.");
+                add("! Shizuku app open kore START koro.");
                 return;
             }
 
@@ -657,69 +491,108 @@ public class MainActivity extends Activity {
                 Shizuku.requestPermission(7);
 
             } else {
-                addLog("+ Shizuku already connected");
-                updateStatus();
+                add("+ Already connected");
+                state();
             }
 
-        } catch (Throwable error) {
-            addLog("! " + error);
+        } catch (Throwable e) {
+            add("! " + e);
         }
     }
 
-    void addLog(String text) {
-        h.post(() -> {
-            log.append("\n" + text);
-            logBox.post(() ->
-                    logBox.fullScroll(ScrollView.FOCUS_DOWN)
-            );
+    void add(String s) {
+        ui.post(() -> {
+            logs.append("\n" + s);
+            logBox.post(() -> logBox.fullScroll(ScrollView.FOCUS_DOWN));
         });
     }
 
-    void runCommand(String section, String script,
-                    Button button) {
+    void run(String title, String script, Button bt) {
+        if (!ready()) {
+            add("! Age SHIZUKU CONNECT koro");
 
-        if (!isReady()) {
-            addLog("! Age SHIZUKU CONNECT koro");
             Toast.makeText(
                     this,
                     "Shizuku connect koro",
                     Toast.LENGTH_SHORT
             ).show();
+
             return;
         }
 
         if (busy) {
-            Toast.makeText(
-                    this,
-                    "Wait koro, command cholche...",
-                    Toast.LENGTH_SHORT
-            ).show();
+            Toast.makeText(this, "Wait koro...", Toast.LENGTH_SHORT).show();
             return;
         }
 
         busy = true;
-
-        progress.setVisibility(View.VISIBLE);
-        button.setText("RUNNING...");
-        addLog("\n>> " + section);
+        bar.setVisibility(View.VISIBLE);
+        bt.setText("RUNNING...");
+        add("\n>> " + title);
 
         new Thread(() -> {
             boolean success = true;
 
             try {
-                Method processMethod =
-                        Shizuku.class.getDeclaredMethod(
-                                "newProcess",
-                                String[].class,
-                                String[].class,
-                                String.class
-                        );
+                Method m = Shizuku.class.getDeclaredMethod(
+                        "newProcess",
+                        String[].class,
+                        String[].class,
+                        String.class
+                );
 
-                processMethod.setAccessible(true);
+                m.setAccessible(true);
 
-                Process process = (Process) processMethod.invoke(
+                Process p = (Process) m.invoke(
                         null,
-                        new String[]{
-                                "sh",
-                                "-c",
-             
+                        new Object[]{
+                                new String[]{
+                                        "sh",
+                                        "-c",
+                                        "{\n" + script + "\n} 2>&1"
+                                },
+                                null,
+                                null
+                        }
+                );
+
+                BufferedReader r = new BufferedReader(
+                        new InputStreamReader(p.getInputStream())
+                );
+
+                String line;
+
+                while ((line = r.readLine()) != null) {
+                    if (!line.trim().isEmpty()) add("   " + line);
+                }
+
+                p.waitFor();
+
+            } catch (Throwable e) {
+                success = false;
+                add("! Error: " + e);
+            }
+
+            boolean ok = success;
+
+            ui.post(() -> {
+                busy = false;
+                bar.setVisibility(View.INVISIBLE);
+
+                if (ok) {
+                    bt.setText("APPLIED ✓");
+                    bt.setBackground(new RippleDrawable(
+                            ColorStateList.valueOf(0x55FFFFFF),
+                            glass(18, 0xCC22D87B, 0x99006735, 0x66FFFFFF),
+                            null
+                    ));
+                } else {
+                    bt.setText("RETRY");
+                }
+            });
+
+            add("<< DONE : " + title);
+
+        }).start();
+    }
+            }
