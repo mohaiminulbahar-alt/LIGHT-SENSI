@@ -1,1 +1,37 @@
-
+name: Build LIGHT SENSI APK
+on: [push, workflow_dispatch]
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+      - name: Gradle files
+        run: |
+          echo "android.useAndroidX=true" > gradle.properties
+          echo "rootProject.name = 'LIGHTSENSI'" > settings.gradle
+          echo "include ':app'" >> settings.gradle
+          echo "buildscript { repositories { google(); mavenCentral() }; dependencies { classpath 'com.android.tools.build:gradle:8.5.2' } }" > build.gradle
+          echo "allprojects { repositories { google(); mavenCentral() } }" >> build.gradle
+          echo "apply plugin: 'com.android.application'" > app/build.gradle
+          echo "android { namespace 'com.lightsensi.aura'; compileSdk 34; defaultConfig { applicationId 'com.lightsensi.aura'; minSdk 24; targetSdk 34; versionCode 1; versionName '1.0' }; compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 } }" >> app/build.gradle
+          echo "dependencies { implementation 'dev.rikka.shizuku:api:13.1.5'; implementation 'dev.rikka.shizuku:provider:13.1.5' }" >> app/build.gradle
+      - name: Build
+        run: gradle assembleDebug --no-daemon --stacktrace
+      - run: cp app/build/outputs/apk/debug/app-debug.apk LIGHT-SENSI.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LIGHT-SENSI-APK
+          path: LIGHT-SENSI.apk
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "v${{ github.run_number }}" LIGHT-SENSI.apk --title "LIGHT SENSI v${{ github.run_number }}" --notes "Red Black Aura Edition"
