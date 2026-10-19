@@ -1,0 +1,408 @@
+name: Build LIGHT SENSI APK
+on: [push, workflow_dispatch]
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+      - name: Create project files
+        run: |
+          mkdir -p app/src/main/java/com/lightsensi/aura
+
+          cat > settings.gradle << 'EOF1'
+          pluginManagement {
+              repositories { google(); mavenCentral(); gradlePluginPortal() }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories { google(); mavenCentral() }
+          }
+          rootProject.name = "LIGHT SENSI"
+          include ':app'
+          EOF1
+
+          cat > build.gradle << 'EOF2'
+          plugins {
+              id 'com.android.application' version '8.5.2' apply false
+          }
+          EOF2
+
+          cat > gradle.properties << 'EOF3'
+          android.useAndroidX=true
+          org.gradle.jvmargs=-Xmx2048m
+          EOF3
+
+          cat > app/build.gradle << 'EOF4'
+          plugins { id 'com.android.application' }
+          android {
+              namespace 'com.lightsensi.aura'
+              compileSdk 34
+              defaultConfig {
+                  applicationId "com.lightsensi.aura"
+                  minSdk 24
+                  targetSdk 34
+                  versionCode 1
+                  versionName "1.0"
+              }
+              compileOptions {
+                  sourceCompatibility JavaVersion.VERSION_17
+                  targetCompatibility JavaVersion.VERSION_17
+              }
+          }
+          dependencies {
+              implementation 'dev.rikka.shizuku:api:13.1.5'
+              implementation 'dev.rikka.shizuku:provider:13.1.5'
+          }
+          EOF4
+
+          cat > app/src/main/AndroidManifest.xml << 'EOF5'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <application
+                  android:label="LIGHT SENSI"
+                  android:icon="@android:drawable/sym_def_app_icon"
+                  android:theme="@android:style/Theme.Black.NoTitleBar"
+                  android:allowBackup="false">
+                  <activity android:name=".MainActivity" android:exported="true"
+                      android:screenOrientation="portrait">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+                  <provider
+                      android:name="rikka.shizuku.ShizukuProvider"
+                      android:authorities="${applicationId}.shizuku"
+                      android:enabled="true"
+                      android:exported="true"
+                      android:multiprocess="false"
+                      android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
+              </application>
+          </manifest>
+          EOF5
+
+          cat > app/src/main/java/com/lightsensi/aura/MainActivity.java << 'EOF6'
+          package com.lightsensi.aura;
+
+          import android.app.Activity;
+          import android.content.pm.PackageManager;
+          import android.graphics.Color;
+          import android.graphics.Typeface;
+          import android.graphics.drawable.GradientDrawable;
+          import android.os.Bundle;
+          import android.os.Handler;
+          import android.os.Looper;
+          import android.view.Gravity;
+          import android.widget.*;
+          import java.io.BufferedReader;
+          import java.io.InputStreamReader;
+          import java.lang.reflect.Method;
+          import rikka.shizuku.Shizuku;
+
+          public class MainActivity extends Activity {
+
+              TextView logView, status;
+              ScrollView logScroll;
+              final Handler ui = new Handler(Looper.getMainLooper());
+              volatile boolean busy = false;
+              int cores = 8;
+
+              final Shizuku.OnRequestPermissionResultListener permL = (c, r) -> ui.post(this::refresh);
+              final Shizuku.OnBinderReceivedListener binderL = () -> ui.post(this::refresh);
+              final Shizuku.OnBinderDeadListener deadL = () -> ui.post(this::refresh);
+
+              @Override
+              protected void onCreate(Bundle b) {
+                  super.onCreate(b);
+                  getWindow().setStatusBarColor(Color.BLACK);
+                  cores = Math.max(1, Runtime.getRuntime().availableProcessors());
+                  buildUI();
+                  Shizuku.addRequestPermissionResultListener(permL);
+                  Shizuku.addBinderReceivedListenerSticky(binderL);
+                  Shizuku.addBinderDeadListener(deadL);
+              }
+
+              @Override
+              protected void onDestroy() {
+                  super.onDestroy();
+                  Shizuku.removeRequestPermissionResultListener(permL);
+                  Shizuku.removeBinderReceivedListener(binderL);
+                  Shizuku.removeBinderDeadListener(deadL);
+              }
+
+              int dp(int v) { return (int) (v * getResources().getDisplayMetrics().density); }
+
+              GradientDrawable bg(int c1, int c2, int stroke, int radius) {
+                  GradientDrawable g = new GradientDrawable(GradientDrawable.Orientation.TL_BR, new int[]{c1, c2});
+                  g.setCornerRadius(dp(radius));
+                  g.setStroke(dp(stroke), 0xFFFF0022);
+                  return g;
+              }
+
+              LinearLayout.LayoutParams lp(int top) {
+                  LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, -2);
+                  p.topMargin = dp(top);
+                  return p;
+              }
+
+              TextView text(String s, int sp, int color, boolean bold) {
+                  TextView t = new TextView(this);
+                  t.setText(s); t.setTextSize(sp); t.setTextColor(color);
+                  if (bold) t.setTypeface(Typeface.DEFAULT_BOLD);
+                  return t;
+              }
+
+              Button btn(String s, int h) {
+                  Button b = new Button(this);
+                  b.setText(s); b.setTextColor(Color.WHITE);
+                  b.setTypeface(Typeface.DEFAULT_BOLD);
+                  b.setBackground(bg(0xFFFF0022, 0xFF3A0000, 1, 12));
+                  b.setShadowLayer(12, 0, 0, 0xFFFF0000);
+                  LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, dp(h));
+                  p.topMargin = dp(8);
+                  b.setLayoutParams(p);
+                  return b;
+              }
+
+              LinearLayout card() {
+                  LinearLayout c = new LinearLayout(this);
+                  c.setOrientation(LinearLayout.VERTICAL);
+                  c.setPadding(dp(14), dp(12), dp(14), dp(12));
+                  c.setBackground(bg(0xFF140000, 0xFF050505, 2, 16));
+                  c.setLayoutParams(lp(12));
+                  return c;
+              }
+
+              void buildUI() {
+                  ScrollView sv = new ScrollView(this);
+                  sv.setBackground(new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
+                          new int[]{0xFF2A0000, 0xFF000000, 0xFF000000}));
+                  LinearLayout root = new LinearLayout(this);
+                  root.setOrientation(LinearLayout.VERTICAL);
+                  root.setPadding(dp(14), dp(20), dp(14), dp(30));
+                  sv.addView(root);
+
+                  TextView title = text("⚡ LIGHT SENSI ⚡", 34, 0xFFFF0022, true);
+                  title.setGravity(Gravity.CENTER);
+                  title.setShadowLayer(30, 0, 0, 0xFFFF0000);
+                  root.addView(title);
+
+                  TextView sub = text("AURA FARMING • RED EDITION • SHIZUKU", 12, 0xFFAAAAAA, true);
+                  sub.setGravity(Gravity.CENTER);
+                  sub.setLetterSpacing(0.15f);
+                  root.addView(sub);
+
+                  LinearLayout sc = card();
+                  status = text("● Shizuku: checking...", 15, 0xFFFF0033, true);
+                  sc.addView(status);
+                  Button con = btn("🔗 CONNECT SHIZUKU", 52);
+                  con.setOnClickListener(v -> connect());
+                  sc.addView(con);
+                  root.addView(sc);
+
+                  Button all = btn("🔥 ACTIVATE ALL • MAX AURA 🔥", 68);
+                  all.setTextSize(17);
+                  all.setOnClickListener(v -> run("MAX AURA", FPS + "\n" + TOUCH + "\n" + GPU + "\n"
+                          + cpu() + "\n" + GAME + "\n" + CLEAN + "\n" + POWER + "\n" + CHIP));
+                  root.addView(all);
+
+                  addSection(root, "1. FPS & 120Hz LOCK", "Refresh rate + frame rate 120", "APPLY FPS BOOST", FPS);
+                  addSection(root, "2. LIGHT SENSI TOUCH 👆", "Pointer 7 • 180 events • 1440Hz", "APPLY TOUCH SENSI", TOUCH);
+                  addSection(root, "3. GPU / RENDER / SF 🎮", "SurfaceFlinger • EGL • HWUI skia", "APPLY GPU BOOST", GPU);
+                  addSection(root, "4. CPU / RAM BEAST ⚡", "Threads • freezer • priority", "APPLY CPU BOOST", null);
+                  addSection(root, "5. GAME BOOSTER 🎯", "FF • PUBG • CODM • MLBB • Genshin (slow, wait)", "BOOST ALL GAMES", GAME);
+                  addSection(root, "6. CLEANER + LAG KILLER 🧹", "Cache trim • kill bg apps", "CLEAN + KILL LAG", CLEAN);
+                  addSection(root, "7. POWER + THERMAL 🔋", "Fixed performance mode", "UNLOCK POWER", POWER);
+                  addSection(root, "8. CHIP + HWUI AURA CORE 🛡️", "MTK/QC • RS • logs off", "APPLY AURA CORE", CHIP);
+                  addSection(root, "9. ⚠ EXTREME (RISKY)", "GMS block • RAM limit • notification late hote pare", "APPLY EXTREME", EXTREME);
+                  addSection(root, "10. ♻ RESET ALL", "Somossa hole sob tweak undo", "RESET TO DEFAULT", RESET);
+                  addSection(root, "11. DEVICE INFO ℹ️", "Model • SDK • Kernel • GPU", "CHECK DEVICE INFO", INFO);
+
+                  TextView lt = text("TERMINAL LOG:", 15, 0xFFFF0022, true);
+                  lt.setLayoutParams(lp(16));
+                  root.addView(lt);
+                  logScroll = new ScrollView(this);
+                  logScroll.setBackground(bg(0xFF000000, 0xFF0A0000, 2, 12));
+                  logScroll.setPadding(dp(10), dp(10), dp(10), dp(10));
+                  LinearLayout.LayoutParams lsp = new LinearLayout.LayoutParams(-1, dp(280));
+                  lsp.topMargin = dp(6);
+                  logScroll.setLayoutParams(lsp);
+                  logView = text("LIGHT SENSI ready...\n", 11, 0xFFFF4444, false);
+                  logView.setTypeface(Typeface.MONOSPACE);
+                  logScroll.addView(logView);
+                  root.addView(logScroll);
+
+                  Button clr = btn("CLEAR LOG", 48);
+                  clr.setOnClickListener(v -> logView.setText(""));
+                  root.addView(clr);
+
+                  setContentView(sv);
+              }
+
+              void addSection(LinearLayout root, String t, String d, String bt, String script) {
+                  LinearLayout c = card();
+                  TextView tt = text(t, 18, 0xFFFF0022, true);
+                  tt.setShadowLayer(14, 0, 0, 0xFFFF0000);
+                  c.addView(tt);
+                  c.addView(text(d, 12, 0xFFAAAAAA, false));
+                  Button b = btn(bt, 50);
+                  b.setOnClickListener(v -> run(t, script == null ? cpu() : script));
+                  c.addView(b);
+                  root.addView(c);
+              }
+
+              boolean ready() {
+                  try {
+                      return Shizuku.pingBinder() && !Shizuku.isPreV11()
+                              && Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED;
+                  } catch (Throwable e) { return false; }
+              }
+
+              void refresh() {
+                  try {
+                      if (!Shizuku.pingBinder()) {
+                          status.setText("● Shizuku: NOT RUNNING (Shizuku app e Start koro)");
+                          status.setTextColor(0xFFFF0033);
+                      } else if (ready()) {
+                          status.setText("● Shizuku: CONNECTED 🔥 READY");
+                          status.setTextColor(0xFF00FF66);
+                      } else {
+                          status.setText("● Shizuku: Permission lagbe (CONNECT chapo)");
+                          status.setTextColor(0xFFFFAA00);
+                      }
+                  } catch (Throwable e) { status.setText("● Shizuku error"); }
+              }
+
+              void connect() {
+                  try {
+                      if (!Shizuku.pingBinder()) { log("❌ Shizuku running nai. Shizuku app open kore Start koro."); return; }
+                      if (Shizuku.isPreV11()) { log("❌ Shizuku update koro (v11+ lagbe)."); return; }
+                      if (Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED) Shizuku.requestPermission(7);
+                      else { log("✅ Already connected!"); refresh(); }
+                  } catch (Throwable e) { log("❌ " + e); }
+              }
+
+              Process shizukuProcess(String script) throws Exception {
+                  Method m = Shizuku.class.getDeclaredMethod("newProcess", String[].class, String[].class, String.class);
+                  m.setAccessible(true);
+                  return (Process) m.invoke(null, new String[]{"sh", "-c", "{\n" + script + "\n} 2>&1"}, null, null);
+              }
+
+              void log(String s) {
+                  ui.post(() -> {
+                      logView.append(s + "\n");
+                      logScroll.post(() -> logScroll.fullScroll(ScrollView.FOCUS_DOWN));
+                  });
+              }
+
+              void run(String title, String script) {
+                  if (!ready()) { log("❌ Age Shizuku CONNECT koro!"); toast("Shizuku connect koro!"); return; }
+                  if (busy) { toast("Ekta kaj cholche, wait koro..."); return; }
+                  busy = true;
+                  log("\n===== " + title + " START =====");
+                  toast(title + " applying...");
+                  new Thread(() -> {
+                      try {
+                          Process p = shizukuProcess(script);
+                          BufferedReader r = new BufferedReader(new InputStreamReader(p.getInputStream()));
+                          String line;
+                          while ((line = r.readLine()) != null) if (!line.trim().isEmpty()) log("> " + line);
+                          p.waitFor();
+                          log("✅ " + title + " DONE 🔥");
+                          ui.post(() -> toast(title + " Success!"));
+                      } catch (Throwable e) {
+                          log("❌ Error: " + e);
+                      } finally { busy = false; }
+                  }).start();
+              }
+
+              void toast(String s) { Toast.makeText(this, s, Toast.LENGTH_SHORT).show(); }
+
+              static final String FPS = """
+                  settings put system fstb_target_fps_margin_high_fps 20
+                  settings put system fstb_target_fps_margin_low_fps 20
+                  settings put system gcc_fps_margin 10
+                  settings put system tran_low_battery_60hz_refresh_rate.support 0
+                  settings put system vendor.display.refresh_rate 120
+                  settings put system user_refresh_rate 120
+                  settings put system sf.refresh_rate 120
+                  settings put secure user_refresh_rate 120
+                  settings put secure miui_refresh_rate 120
+                  settings put system min_frame_rate 120
+                  settings put system max_frame_rate 120
+                  settings put global min_fps 120
+                  settings put global max_fps 120
+                  settings put system NV_FPSLIMIT 120
+                  settings put system tran_refresh_mode 120
+                  settings put system last_tran_refresh_mode_in_refresh_setting 120
+                  settings put system tran_need_recovery_refresh_mode 120
+                  settings put system display_min_refresh_rate 120
+                  settings put system min_refresh_rate 120
+                  settings put system max_refresh_rate 120
+                  settings put system peak_refresh_rate 120
+                  settings put secure refresh_rate_mode 120
+                  settings put system thermal_limit_refresh_rate 120
+                  settings put system fps.limit.is.now locked
+                  setprop debug.redroid.fps 120
+                  setprop debug.javafx.animation.framerate 120
+                  setprop debug.OVRPlugin.systemDisplayFrequency 120
+                  echo FPS tweaks applied
+                  """;
+
+              static final String TOUCH = """
+                  settings put global windowsmgr.max_events_per_sec 180
+                  settings put system windowsmgr.max_events_per_sec 180
+                  settings put system pointer_speed 7
+                  settings put system vertical_mousd_movement 0.1
+                  settings put system latency_pointer 0.01
+                  settings put system touch_oem true
+                  device_config put input filtered_accel_event_rate_hz 1440
+                  echo Touch tweaks applied
+                  """;
+
+              static final String GPU = """
+                  setprop debug.mdpcomp.logs 0
+                  setprop debug.sf.high_fps.early.app.duration 10000000
+                  setprop debug.sf.high_fps.early.sf.duration 13800000
+                  setprop debug.sf.high_fps.earlyGl.app.duration 10000000
+                  setprop debug.sf.high_fps.earlyGl.sf.duration 13800000
+                  setprop debug.sf.high_fps.late.app.duration 10000000
+                  setprop debug.sf.high_fps_early_cpu_app_offset_ns 60
+                  setprop debug.sf.high_fps_early_gpu_app_offset_ns 60
+                  setprop debug.sf.early.app.duration 20000000
+                  setprop debug.sf.early.sf.duration 27600000
+                  setprop debug.sf.earlyGl.app.duration 20000000
+                  setprop debug.sf.earlyGl.sf.duration 27600000
+                  setprop debug.sf.hwc.min.duration 23000000
+                  setprop debug.sf.late.app.duration 20000000
+                  setprop debug.sf.late.sf.duration 27600000
+                  setprop debug.sf.high_fps.hwc.min.duration 8500000
+                  setprop debug.sf.high_fps_late_app_phase_offset_ns 100000
+                  setprop debug.sf.phase_offset_threshold_for_next_vsync_ns 6100000
+                  setprop debug.sf.early_phase_offset_ns 500000
+                  setprop debug.sf.early_app_phase_offset_ns 500000
+                  setprop debug.sf.early_gl_phase_offset_ns 3000000
+                  setprop debug.sf.high_fps_early_gl_phase_offset_ns 9000000
+                  setprop debug.sf.early_gl_app_phase_offset_ns 15000000
+                  setprop debug.sf.high_fps_early_phase_offset_ns 6100000
+                  setprop debug.sf.enable_gl_backpressure 0
+                  setprop debug.sf.luma_sampling 1
+                  setprop debug.sf.use_frame_rate_priority 1
+                  setprop debug.sf.disable_backpressure 1
+                  setprop debug.sf.use_phase_offsets_as_durations 0
+                  setprop debug.sf.enable_advanced_sf_phase_offset 1
+                  setprop debug.sf.enable_hwc_vds 0
+                  setprop debug.sf.auto_latch_unsignaled 1
+                  setprop debug.sf.latch_unsignaled 1
+                  setprop debug.sf.showupdates 0
+                  setprop debug.sf.showcpu 0
+                  setprop debug.sf.showbackground 0
+                  s
